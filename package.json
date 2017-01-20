@@ -1,0 +1,12 @@
+{
+  "name": "hubot-toggl",
+  "version": "1.0.0",
+  "author": "Armin Riiet <armin.riiet@cdptech.com>",
+  "description": "A Hubot script to add Toggl integration to your company's chat",
+  "dependencies": {
+    "bluebird": "^3.3.3",
+    "co": "^4.6.0",
+    "lodash": "^4.5.1",
+    "moment": "^2.10.6"
+  }
+}
