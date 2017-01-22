@@ -70,9 +70,11 @@ function hubotToggl(robot) {
         });
     });
   }
-
-  robot.respond(/toggl setup( (.*))?/, function(res) {
-    var token = res.match[2];
+  
+  robot.respond(/x/, function(res) {
+    var token = "899c26ade5e4966821a509efa30101d4"
+  //robot.respond(/toggl setup( (.*))?/, function(res) {
+    //var token = res.match[2];
 
     if(!robot.adapter.client.rtm.dataStore.getDMById(res.message.room)) {
       res.reply('I can only authenticate you with a Private Message');
@@ -250,6 +252,108 @@ function hubotToggl(robot) {
         );
       })
       .catch(errorHandler(res));
+  });
+  
+  if (!String.format) {
+    String.format = function(format) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return format.replace(/{(\d+)}/g, function(match, number) { 
+        return typeof args[number] !== 'undefined'
+          ? args[number] 
+          : match
+        ;
+      });
+    };
+  }
+  
+  function getWorkingHours(res, fromDate, toDate) {
+    return new Promise(function(resolve, reject) {
+        var url = String.format("https://www.toggl.com/api/v8/time_entries?start_date={0}&end_date={1}", 
+          fromDate.toISOString(), 
+          toDate.toISOString());
+
+        http(res, 'get', url)
+          .spread(function(httpRes, body) {
+            assertStatus(200, httpRes);
+            body = JSON.parse(body);
+            var totalHours = 0;
+            for (var i in body) {
+              var start = new Date(body[i]['start']);
+              var end = new Date(body[i]['stop']);
+              var diff = end.valueOf() - start.valueOf();
+              var diffInHours = diff/1000/60/60;
+              totalHours = totalHours + diffInHours;
+            }
+            resolve(totalHours);
+          })
+          .catch(errorHandler(res));
+      });
+  }
+  
+  function parseParams(res) {
+    var request = [];
+    var subjectArg = res.match[1];
+    request.requestUnits = subjectArg.slice(-1);
+    request.relativeTime = subjectArg.slice(0, subjectArg.length - 1);
+
+    var normalHoursArg = res.match[2];
+    request.normalHoursUnits = normalHoursArg.slice(-1);
+    request.normalHours = normalHoursArg.slice(0, normalHoursArg.length - 1);
+    return request;
+  }
+  
+  function validateRequest(request) {
+    if (!((request.requestUnits === 'd' || request.requestUnits === 'w')  && request.normalHoursUnits === 'h'))
+      return false;
+    if (isNaN(parseInt(request.relativeTime)) || isNaN(parseInt(request.normalHours)))
+      return false;
+    return true;
+  }
+  
+  function getRequestedTime(relativeTime, units) {
+    var time = [];
+    if (units === 'd'){
+      time.start = moment().add(relativeTime, 'days').startOf('day').toDate();
+      time.end = moment().add(relativeTime, 'days').endOf('day').toDate();
+    }
+    else if (units === 'w'){
+      time.start = moment().add(relativeTime, 'weeks').startOf('week').toDate();
+      time.end = moment().add(relativeTime, 'weeks').endOf('week').toDate();
+    }
+    return time;
+  }
+  
+  function calculateFlex(totalHours, normalHours) {
+    return totalHours > normalHours ? totalHours - normalHours : 0;
+  }
+  
+  function calculateAbsence(totalHours, normalHours) {
+    return totalHours < normalHours ? normalHours - totalHours : 0;
+  }
+  
+  function sendReport(res, time, flex, absence) {
+    res.send("Found " + flex + " hours of flex on " + time.start.toDateString() + " - " + time.end.toDateString());
+    res.send("Found " + absence + " hours of absence on " + time.start.toDateString() + " - " + time.end.toDateString());
+  }
+  
+  robot.respond(/f (.*) (.*)/, function(res) {
+    var request = parseParams(res);
+    if (!validateRequest(request)){
+      res.send('Incorrect arguments. Send me *toggl calc flex <days> <hours>*');
+      return;
+    }
+    var time = getRequestedTime(request.relativeTime, request.requestUnits);
+    getWorkingHours(res, time.start, time.end)
+      .then(function(hours){
+        var flex = calculateFlex(hours, request.normalHours);
+        var absence = calculateAbsence(hours, request.normalHours);
+        sendReport(res, time, flex, absence);
+      });
+    
+  });
+  
+  robot.respond(/t/, function(res) {
+
   });
 }
 
