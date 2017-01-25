@@ -7,6 +7,8 @@
 //   hubot toggl show flex - Shows flex earned in current year
 //   hubot toggl get flex <time slot> <working hours> - Calculates flex and absence in given time slot
 //   hubot toggl log flex <time slot> <working hours> - Logs flex in given timeslot
+//   hubot toggl get flex help - Prints detailed help for get flex command
+//   hubot toggl log flex help - Prints detailed help for log flex command
 
 'use strict';
 var buffer = require('buffer');
@@ -16,6 +18,11 @@ var moment = require('moment');
 
 var Buffer = buffer.Buffer;
 var NO_ACCOUNT_ERROR = 'No Toggl Account set-up. Add your account with: *toggl setup <token>*';
+var workspaceId = 703078;
+var absenceProjectId = 30099519;
+var absenceTaskName = "Compensatory time off (flex hours)";
+var flexTagName = "flex";
+var userAgent = "hubot";
 
 if (!String.format) {
   String.format = function(format) {
@@ -28,35 +35,23 @@ if (!String.format) {
     });
   };
 }
-    
+
+Number.prototype.round = function(decimals) {
+  return Number((Math.round(this + "e" + decimals)  + "e-" + decimals));
+};
+
 function hoursToSeconds(hours) {
   return hours * 60 * 60;
 }
 
 function secondsToHours(seconds) {
-  return seconds / 60 / 60;
+  return (seconds / 60 / 60).round(2);
 }
 
-function getAbsenceProjectId() {
-    return 7701697;
-}
+function formatErrorMessage(err) {
+  return '*Error:* ' + err;
+} 
 
-function getAbsenceTaskId() {
-    return 0;
-}
-
-function getWorkspaceId() {
-  return 703078;
-}
-
-function getFlexTag() {
-  return 'flex';
-}
-  
-function getUserAgent() {
-  return "hubot";
-}
-  
 function hubotToggl(robot) {
   robot.logger.info("hubot-toggl: Starting the Toggl robot");
 
@@ -70,10 +65,15 @@ function hubotToggl(robot) {
 
   function errorHandler(res) {
     return function(err) {
-      res.send('*Error:* ' + err.message);
+      res.send(formatErrorMessage(err.message));
     };
   }
 
+  function isUserAuthenticated(username) {
+    var user = robot.brain.userForName(username);
+    return !user || !user.toggl || !user.toggl.me;
+  }
+  
   function http(res, method, url, body) {
     var token;
     var authorization;
@@ -109,71 +109,21 @@ function hubotToggl(robot) {
         });
     });
   }
-  
-  robot.respond(/toggl setup/, function(res) {
-    var token = "899c26ade5e4966821a509efa30101d4"
-  //robot.respond(/toggl setup( (.*))?/, function(res) {
-    //var token = res.match[2];
 
-    if(!robot.adapter.client.rtm.dataStore.getDMById(res.message.room)) {
-      res.reply('I can only authenticate you with a Private Message');
-      robot.send({room: res.message.room}, 'Send me *toggl setup <token>*');
-      return;
-    }
-
-    var username = res.envelope.user.name;
-
-    if(!token) {
-      res.send('Missing token. Send me *toggl setup <token>*.');
-      return;
-    }
-
-    var user = robot.brain.userForName(username);
-    res.send('Validating your token');
-    http(token, 'get', 'https://toggl.com/api/v8/me')
-      .spread(function(httpRes, body) {
-        assertStatus(200, httpRes);
-        body = JSON.parse(body);
-        res.send(
-          'Authenticated as: *' + body.data.fullname + '*\n' +
-          'User ID: *' + body.data.id + '*\n' +
-          'Default Workspace ID: *' + body.data.default_wid + '*'
-        );
-        user.toggl = {
-          me: body,
-        };
-        robot.brain.save();
-      })
-      .catch(errorHandler(res));
-  });
-
-  robot.respond(/toggl whoami/, function(res) {
-    var username = res.envelope.user.name;
-    var user = robot.brain.userForName(username);
-
-    if(!user || !user.toggl || !user.toggl.me) {
-      res.send(NO_ACCOUNT_ERROR);
-      return;
-    }
-
-    var me = user.toggl.me;
-    res.send(
-      'Authenticated as: *' + me.data.fullname + '*\n' +
-      'User ID: *' + me.data.id + '*\n' +
-      'Default Workspace ID: *' + me.data.default_wid + '*'
-    );
-  });
-  
-  function getTimeEntries(res, time) {
+  function getTimeEntries(res, start, stop) {
     return new Promise(function(resolve, reject) {
         var url = String.format("https://www.toggl.com/api/v8/time_entries?start_date={0}&end_date={1}", 
-          time.start.toISOString(), 
-          time.end.toISOString());
+          start.toISOString(), 
+          stop.toISOString());
 
         http(res, 'get', url)
           .spread(function(httpRes, body) {
             assertStatus(200, httpRes);
             body = JSON.parse(body);
+            body = body.reverse();
+            for (var i in body)
+              if (body[i].duration < 0)
+                reject(new Error("Timer is running."));
             resolve(body);
           })
           .catch(errorHandler(res));
@@ -182,7 +132,7 @@ function hubotToggl(robot) {
     
   function filterOutFlexEntries(timeEntries) {
     return timeEntries.filter(function(item, idx) {
-      return item.tags === undefined || item.tags.indexOf(getFlexTag()) === -1;
+      return item.tags === undefined || item.tags.indexOf(flexTagName) === -1;
     });
   }
   
@@ -193,56 +143,14 @@ function hubotToggl(robot) {
     return time;
   }
   
-  function parseParams(res) {
-    var request = [];
-    var subjectArg = res.match[1];
-    request.requestUnits = subjectArg.slice(-1);
-    request.relativeTime = subjectArg.slice(0, subjectArg.length - 1);
-
-    var normalHoursArg = res.match[2];
-    request.normalHoursUnits = normalHoursArg.slice(-1);
-    request.normalHours = normalHoursArg.slice(0, normalHoursArg.length - 1);
-    return request;
-  }
-  
-  function validateRequest(request) {
-    if (!((request.requestUnits === 'd' || request.requestUnits === 'w')  && request.normalHoursUnits === 'h'))
-      return false;
-    if (isNaN(parseInt(request.relativeTime)) || isNaN(parseInt(request.normalHours)))
-      return false;
-    return true;
-  }
-  
-  function getRequestedTime(relativeTime, units) {
-    var time = [];
-    if (units === 'd'){
-      time.start = moment().add(relativeTime, 'days').startOf('day').toDate();
-      time.end = moment().add(relativeTime, 'days').endOf('day').toDate();
-    }
-    else if (units === 'w'){
-      time.start = moment().add(relativeTime, 'weeks').startOf('week').toDate();
-      time.end = moment().add(relativeTime, 'weeks').endOf('week').toDate();
-    }
-    return time;
-  }
-  
   function calculateFlex(totalTime, normalTime) {
-    return totalTime > normalTime ? totalTime - normalTime : 0;
-  }
-  
-  function calculateAbsence(totalTime, normalTime) {
-    return totalTime < normalTime ? normalTime - totalTime : 0;
-  }
-  
-  function sendReport(res, flex, absence) {
-    res.send(secondsToHours(flex) + " hours of flex");
-    res.send(secondsToHours(absence) + " hours of absence");
+    return totalTime - normalTime;
   }
   
   function updateTimeEntriesWithFlexTag(res, entryIds) {
     http(res, 'put', 'https://www.toggl.com/api/v8/time_entries/'+entryIds.join(","), {
       time_entry: {
-        tags: [getFlexTag()],
+        tags: [flexTagName],
         tag_action: 'add'
       }
     })
@@ -266,7 +174,7 @@ function hubotToggl(robot) {
   
   function addNewEntry(res, timeEntry, flex) {
     var tags = timeEntry.tags !== undefined ? timeEntry.tags : [];
-    tags.push(getFlexTag());
+    tags.push(flexTagName);
     http(res, 'post', 'https://www.toggl.com/api/v8/time_entries', {
       time_entry: {
         description: timeEntry.description,
@@ -317,29 +225,33 @@ function hubotToggl(robot) {
     if (!absence)
       return;
     
-    http(res, 'post', 'https://www.toggl.com/api/v8/time_entries', {
-      time_entry: {
-        pid: getAbsenceProjectId(),
-        tid: getAbsenceTaskId(),
-        duration: absence,
-        start: timeEntries[0].start,
-        created_with: "hubot"
-      }
-    })
-      .spread(function(httpRes, body) {
-        assertStatus(200, httpRes);
+    getAbsenceTaskId(res)
+      .then(function(taskId){
+        http(res, 'post', 'https://www.toggl.com/api/v8/time_entries', {
+          time_entry: {
+            pid: absenceProjectId,
+            tid: taskId,
+            duration: absence,
+            start: timeEntries[0].start,
+            created_with: "hubot"
+          }
+        })
+          .spread(function(httpRes, body) {
+            assertStatus(200, httpRes);
+          })
+          .catch(errorHandler(res));
       })
-      .catch(errorHandler(res));
+     .catch(errorHandler(res));
   }
     
   function getFlexUsed(res) {
     return new Promise(function(resolve, reject) {
       var url = String.format("https://toggl.com/reports/api/v2/summary?workspace_id={0}&since={1}&until={2}&project_ids={3}&user_agent={4}", 
-          getWorkspaceId(),
+          workspaceId,
           moment().startOf('year').format("YYYY-MM-DD"), 
           moment().endOf('year').format("YYYY-MM-DD"),
-          getAbsenceProjectId(),
-          getUserAgent());
+          absenceProjectId,
+          userAgent);
 
       http(res, 'get', url)
         .spread(function(httpRes, body) {
@@ -354,14 +266,14 @@ function hubotToggl(robot) {
   function getFlexTagId(res) {
     return new Promise(function(resolve, reject) {
       var url = String.format("https://www.toggl.com/api/v8/workspaces/{0}/tags", 
-          getWorkspaceId());
+          workspaceId);
 
       http(res, 'get', url)
         .spread(function(httpRes, body) {
           assertStatus(200, httpRes);
           body = JSON.parse(body);
           for (var i in body){
-            if (body[i].name === getFlexTag())
+            if (body[i].name === flexTagName)
               resolve(body[i].id);
           }
           reject("Unable to find tag named 'flex'");
@@ -375,11 +287,11 @@ function hubotToggl(robot) {
       getFlexTagId(res)
         .then(function(tagId) {
           var url = String.format("https://toggl.com/reports/api/v2/summary?workspace_id={0}&since={1}&until={2}&tag_ids={3}&user_agent={4}", 
-            getWorkspaceId(),
+            workspaceId,
             moment().startOf('year').format("YYYY-MM-DD"), 
             moment().endOf('year').format("YYYY-MM-DD"),
             tagId,
-            getUserAgent());
+            userAgent);
 
           http(res, 'get', url)
             .spread(function(httpRes, body) {
@@ -388,84 +300,205 @@ function hubotToggl(robot) {
               resolve(body.total_grand/1000);
             })
             .catch(errorHandler(res));
-        }, function(error) {
-          console.error("Failed!", error);
-        }
-      );  
+        })
+        .catch(errorHandler(res));
+    });  
+  }
+  
+  function getAbsenceTaskId(res) {
+    return new Promise(function(resolve, reject) {
+      var url = String.format("https://www.toggl.com/api/v8/projects/{0}/tasks", absenceProjectId);
+
+      http(res, 'get', url)
+        .spread(function(httpRes, body) {
+          assertStatus(200, httpRes);
+          body = JSON.parse(body);
+          for (var i in body){
+            if (body[i].name === absenceTaskName)
+              resolve(body[i].id);
+          }
+          res.send("Unable to log under task *" + absenceTaskName +"*. Logging under project only.");
+          resolve(null);
+        })
+        .catch(errorHandler(res));
     });
   }
   
-  function getGetFlexHelp() {
-    var message = 
-      "get flex <timeslot> <working hours>\n" +
-      "Reports flex and absence in given time slot based on working hours.\n" +
-      "_timeslot_ - Relative time period to calculate the flex from. e.g -1w for previous week\n" +
-      "_working hours_ - Normal working hours in this timeslot. e.g 40h for 40 hours";
-    return message;
+  function logFlex(res, entries, flex)
+  {
+    if (flex > 0)
+      addFlex(res, entries, flex);
+    else
+      addAbsence(res, entries, Math.abs(flex));
   }
-  
-  function getLogFlexHelp() {
-    var message = 
-      "log flex <timeslot> <working hours>\n" +
-      "Logs flex and absence in given time slot based on working hours.\n" +
-      "_timeslot_ - Relative time period to calculate the flex from. e.g -1w for previous week\n" +
-      "_working hours_ - Normal working hours in this timeslot. e.g 40h for 40 hours";
-    return message;
+
+  function parseRequest(res) {
+    var timeslotArg = res.match[1];
+    var timeslotUnits = timeslotArg.slice(-1);
+    var timeslot = timeslotArg.slice(0, timeslotArg.length - 1);
+
+    var workingTimeArg = res.match[2];
+    var workingTimeUnits = workingTimeArg.slice(-1);
+    var workingTime = workingTimeArg.slice(0, workingTimeArg.length - 1);
+    
+    try {
+      timeslot = parseInt(timeslot);
+      workingTime = parseFloat(workingTime);
+      
+      if (timeslotUnits !== 'd' && timeslotUnits !== 'w')
+        throw 'Use _w_ for weeks or _d_ for days in _time slot_. E.g -2d or -3w';
+      if (workingTimeUnits !== 'h')
+        throw 'Use _h_ (hours) for _working hours_. E.g 40h';
+      if (isNaN(timeslot))
+        throw '_Time slot_ must be integer.';
+      if (isNaN(workingTime) || workingTime < 0)
+        throw '_Working hours_ cannot be negative.';
+    }
+    catch(err){
+      res.send(formatErrorMessage(err));
+      return null;
+    }
+    
+    var request = [];
+    if (timeslotUnits === 'd')
+    {
+      request.start = moment().add(timeslot, 'days').startOf('day').toDate();
+      request.stop = moment().add(timeslot, 'days').endOf('day').toDate();
+    }
+    else if (timeslotUnits === 'w')
+    {
+      request.start = moment().add(timeslot, 'weeks').startOf('week').toDate();
+      request.stop = moment().add(timeslot, 'weeks').endOf('week').toDate();
+    }
+    if (workingTimeUnits === 'h')
+      request.workingTime = hoursToSeconds(workingTime);
+    return request;
   }
-  
-  robot.respond(/toggl get flex (.*) (.*)/, function(res) {
-    var request = parseParams(res);
-    if (!validateRequest(request)){
-      res.send(getGetFlexHelp());
+    
+  robot.respond(/toggl setup( (.*))?/, function(res) {
+    var token = res.match[2];
+
+    if(!robot.adapter.client.rtm.dataStore.getDMById(res.message.room)) {
+      res.reply('I can only authenticate you with a Private Message');
+      robot.send({room: res.message.room}, 'Send me *toggl setup <token>*');
       return;
     }
-    var time = getRequestedTime(request.relativeTime, request.requestUnits);
-    getTimeEntries(res, time)
+
+    var username = res.envelope.user.name;
+
+    if(!token) {
+      res.send('Missing token. Send me *toggl setup <token>*.');
+      return;
+    }
+
+    var user = robot.brain.userForName(username);
+    res.send('Validating your token');
+    http(token, 'get', 'https://toggl.com/api/v8/me')
+      .spread(function(httpRes, body) {
+        assertStatus(200, httpRes);
+        body = JSON.parse(body);
+        res.send(
+          'Authenticated as: *' + body.data.fullname + '*\n' +
+          'User ID: *' + body.data.id + '*\n' +
+          'Default Workspace ID: *' + body.data.default_wid + '*'
+        );
+        user.toggl = {
+          me: body
+        };
+        robot.brain.save();
+      })
+      .catch(errorHandler(res));
+  });
+  
+  robot.respond(/toggl whoami/, function(res) {
+    var user = robot.brain.userForName(res.envelope.user.name);
+    if (!user || !user.toggl || !user.toggl.me){
+      res.send(NO_ACCOUNT_ERROR);
+      return;
+    }
+    
+    var me = user.toggl.me;
+    res.send(
+      'Authenticated as: *' + me.data.fullname + '*\n' +
+      'User ID: *' + me.data.id + '*\n' +
+      'Default Workspace ID: *' + me.data.default_wid + '*'
+    );
+  });
+  
+  robot.respond(/toggl get flex (.*) (.*)/, function(res) {
+    if (isUserAuthenticated(res.envelope.user.name)){
+      res.send(NO_ACCOUNT_ERROR);
+      return;
+    }
+    
+    var request = parseRequest(res);
+    if (!request)
+      return;
+
+    getTimeEntries(res, request.start, request.stop)
       .then(function(entries){
         entries = filterOutFlexEntries(entries);
         var timeLogged = calculateTimeLogged(entries);
-        var flex = calculateFlex(timeLogged, hoursToSeconds(request.normalHours));
-        var absence = calculateAbsence(timeLogged, hoursToSeconds(request.normalHours));
-        sendReport(res, flex, absence);
-      });
+        var flex = calculateFlex(timeLogged, request.workingTime);
+        res.send(secondsToHours(flex) + " hours of flex found");
+      })
+      .catch(errorHandler(res));
   });
   
   robot.respond(/toggl log flex (.*) (.*)/, function(res) {
-    var request = parseParams(res);
-    if (!validateRequest(request)){
-      res.send(getLogFlexHelp());
+    if (isUserAuthenticated(res.envelope.user.name)){
+      res.send(NO_ACCOUNT_ERROR);
       return;
     }
-    var time = getRequestedTime(request.relativeTime, request.requestUnits);
-    getTimeEntries(res, time)
+    
+    var request = parseRequest(res);
+    if (!request)
+      return;
+
+    getTimeEntries(res, request.start, request.stop)
       .then(function(entries){
         entries = filterOutFlexEntries(entries);
         var timeLogged = calculateTimeLogged(entries);
-        var flex = calculateFlex(timeLogged, hoursToSeconds(request.normalHours));
-        var absence = calculateAbsence(timeLogged, hoursToSeconds(request.normalHours));
-        addFlex(res, entries, flex);
-        addAbsence(res, entries, absence);
-        sendReport(res, flex, absence);
-      });
-  });
-  
-  robot.respond(/toggl get flex/, function(res) {
-    res.send(getGetFlexHelp());
-  });
-
-  robot.respond(/toggl log flex/, function(res) {
-    res.send(getLogFlexHelp());
+        var flex = calculateFlex(timeLogged, request.workingTime);
+        logFlex(res, entries, flex);
+        res.send(secondsToHours(flex) + " hours of flex logged");
+      })
+      .catch(errorHandler(res));
   });
 
   robot.respond(/toggl show flex/, function(res) {
+    if (isUserAuthenticated(res.envelope.user.name)){
+      res.send(NO_ACCOUNT_ERROR);
+      return;
+    }
+    
     getFlexEarned(res)
       .then(function(flexEarned) {
         getFlexUsed(res)
           .then(function(flexUsed) {
             var flexRemaining = flexEarned - flexUsed;
-            res.send(secondsToHours(flexRemaining) + " hours of flex remaining");
+            res.send(secondsToHours(flexRemaining) + " hours of flex" + (flexRemaining < 0 ? "" : " remaining"));
         });
-      });
+      })
+      .catch(errorHandler(res));
+  });
+    
+  robot.respond(/toggl get flex help/, function(res) {
+    var message = 
+      "get flex <time slot> <working hours>\n" +
+      "Reports flex and absence in given time slot based on working hours.\n" +
+      "_time slot_ - Relative time period to calculate the flex from. e.g -1w for previous week\n" +
+      "_working hours_ - Normal working hours in this time slot. e.g 40h for 40 hours";
+    res.send(message);
+  });
+
+  robot.respond(/toggl log flex help/, function(res) {
+    var message = 
+      "log flex <time slot> <working hours>\n" +
+      "Logs flex and absence in given time slot based on working hours. Negative flex will be logged under absence.\n" +
+      "_time slot_ - Relative time period to calculate the flex from. e.g -1w for previous week\n" +
+      "_working hours_ - Normal working hours in this time slot. e.g 40h for 40 hours";
+    res.send(message);
   });
   
 }
