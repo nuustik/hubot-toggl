@@ -5,7 +5,7 @@
 //   setup <token> - Sets-up an user's account with Toggl
 //   whoami - Prints the current authenticated Toggl user
 //   show flex - Shows flex earned in this year
-//   get flex <time slot> <working hours> - Calculates flex in given time slot
+//   get flex <time slot> <working hours> - Reports flex in given time slot
 //   log flex <time slot> <working hours> - Logs flex in given time slot
 
 'use strict';
@@ -54,7 +54,6 @@ function formatErrorMessage(err) {
 function getHelpForGetFlex() {
   var message = 
     "Send me *get flex <time slot> <working hours>*\n" +
-    "Reports flex in given time slot based on working hours.\n" +
     "_time slot_ - Relative time period to calculate the flex from. E.g -1w for previous week.\n" +
     "_working hours_ - Normal working hours in this time slot. E.g 40h for 40 hours.";
   return message;
@@ -63,7 +62,6 @@ function getHelpForGetFlex() {
 function getHelpForLogFlex() {
   var message = 
     "Send me *log flex <time slot> <working hours>*\n" +
-    "Logs flex in given time slot based on working hours. Negative flex is logged under absence.\n" +
     "_time slot_ - Relative time period to calculate the flex from. E.g -1w for previous week.\n" +
     "_working hours_ - Normal working hours in this time slot. E.g 40h for 40 hours.";
   return message;
@@ -82,14 +80,14 @@ function hubotToggl(robot) {
       return;
     }
 
-    var username = res.envelope.user.name;
+    var userId = res.envelope.user.id;
 
     if(!token) {
       res.send('Missing token. Send me *toggl setup <token>*.');
       return;
     }
 
-    var user = robot.brain.userForName(username);
+    var user = robot.brain.userForId(userId);
     res.send('Validating your token');
     return http(token, 'get', 'https://toggl.com/api/v8/me')
       .spread(function(httpRes, body) {
@@ -108,8 +106,8 @@ function hubotToggl(robot) {
       .catch(errorHandler(res));
   });
   
-  robot.respond(/whoami/i, function(res) {
-    var user = robot.brain.userForName(res.envelope.user.name);
+  robot.respond(/whoami$/i, function(res) {
+    var user = robot.brain.userForId(res.envelope.user.id);
     if (!user || !user.toggl || !user.toggl.me){
       res.send(NO_ACCOUNT_ERROR);
       return;
@@ -124,8 +122,8 @@ function hubotToggl(robot) {
   });
   
   robot.respond(/get flex( +([^\s]+) +([^\s]+))?/i, function(res) {
-    var username = res.envelope.user.name;
-    if (isUserAuthenticated(username)){
+    var userId = res.envelope.user.id;
+    if (isUserAuthenticated(userId)){
       res.send(NO_ACCOUNT_ERROR);
       return;
     }
@@ -140,7 +138,7 @@ function hubotToggl(robot) {
       .then(function(result) {
         if (result.flex !== 0)
         {
-          storeUserData(username, result);
+          storeUserData(userId, result);
           res.send(String.format("{0} hours of flex found. Do you want to log it{1}?", 
             secondsToHours(result.flex),
             result.flex < 0 ? " as absence" : "")
@@ -153,7 +151,7 @@ function hubotToggl(robot) {
   });
   
   robot.respond(/log flex( +([^\s]+) +([^\s]+))?/i, function(res) {
-    if (isUserAuthenticated(res.envelope.user.name)){
+    if (isUserAuthenticated(res.envelope.user.id)){
       res.send(NO_ACCOUNT_ERROR);
       return;
     }
@@ -181,17 +179,17 @@ function hubotToggl(robot) {
       .catch(errorHandler(res));
   });
   
-  robot.respond(/yes\b|y\b/i, function(res) {
-    var username = res.envelope.user.name;
-    if (isUserAuthenticated(username)){
+  robot.respond(/yes\b$|y\b$/i, function(res) {
+    var userId = res.envelope.user.id;
+    if (isUserAuthenticated(userId)){
       return;
     }
     
-    var data = getUserData(username);
+    var data = getUserData(userId);
     if (!data)
       return;
 
-    clearUserData(username);
+    clearUserData(userId);
     getFlex(res, data.request)
       .then(function(result){
         if (result.flex === data.flex){
@@ -207,13 +205,13 @@ function hubotToggl(robot) {
           throw new Error("The amount of flex has changed. Please try again.");
       })
       .catch(function(err){
-        clearUserData(username);
+        clearUserData(userId);
         errorHandler(res)(err);
       });
   });
 
-  robot.respond(/show flex/i, function(res) {
-    if (isUserAuthenticated(res.envelope.user.name)){
+  robot.respond(/show flex$/i, function(res) {
+    if (isUserAuthenticated(res.envelope.user.id)){
       res.send(NO_ACCOUNT_ERROR);
       return;
     }
@@ -236,16 +234,17 @@ function hubotToggl(robot) {
       "setup <token> - Sets-up an user's account with Toggl\n" +
       "whoami - Prints the current authenticated Toggl user\n" +
       "show flex - Shows flex account of this year\n" +
-      "get flex <time slot> <working hours> - Reports flex in given time slot\n" +
-      "log flex <time slot> <working hours> - Logs flex in given time slot\n";
+      "get flex <time slot> <working hours> - Reports flex in given time slot based on working hours\n" +
+      "log flex <time slot> <working hours> - Logs flex in given time slot based on working hours\n";
     res.send(message);
   });
   
-  robot.hear(/^(?!.*(yes\b|y\b))/i, function(res) {
-    if (isUserAuthenticated(res.envelope.user.name)){
+  robot.hear(/^(?!.*(yes\b$|y\b$))/i, function(res) {
+    var userId = res.envelope.user.id;
+    if (isUserAuthenticated(userId)){
       return;
     }
-    clearUserData(res.envelope.user.name);
+    clearUserData(userId);
   });
   
   function assertStatus(status, httpRes) {
@@ -262,8 +261,8 @@ function hubotToggl(robot) {
     };
   }
 
-  function isUserAuthenticated(username) {
-    var user = robot.brain.userForName(username);
+  function isUserAuthenticated(userId) {
+    var user = robot.brain.userForId(userId);
     return !user || !user.toggl || !user.toggl.me;
   }
    
@@ -307,20 +306,20 @@ function hubotToggl(robot) {
     return request;
   }
   
-  function clearUserData(username) {
-    delete userData[username];
+  function clearUserData(user) {
+    delete userData[user];
   }
   
-  function getUserData(username) {
-    return userData[username];
+  function getUserData(user) {
+    return userData[user];
   }
   
-  function storeUserData(username, result) {
+  function storeUserData(user, result) {
     var data = {
       request: result.request,
       flex: result.flex
     };
-    userData[username] = data;
+    userData[user] = data;
   }
   
   function http(res, method, url, body) {
@@ -332,7 +331,7 @@ function hubotToggl(robot) {
       if(_.isString(res)) {
         token = res;
       } else {
-        var user = robot.brain.userForName(res.envelope.user.name);
+        var user = robot.brain.userForId(res.envelope.user.id);
         token = user && user.toggl && user.toggl.me && user.toggl.me.data.api_token;
       }
 
