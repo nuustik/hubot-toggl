@@ -70,10 +70,9 @@ function getHelpForLogFlex() {
 function hubotToggl(robot) {
   robot.logger.info("hubot-toggl: Starting the Toggl robot");
  
-  //robot.respond(/setup( (.*))?/i, function(res) {
-    //var token = res.match[2];
-   robot.respond(/setup/i, function(res) {
-    var token = "899c26ade5e4966821a509efa30101d4";
+  robot.respond(/setup( (.*))?/i, function(res) {
+    var token = res.match[2];
+
     if(!robot.adapter.client.rtm.dataStore.getDMById(res.message.room)) {
       res.reply('I can only authenticate you with a Private Message');
       robot.send({room: res.message.room}, 'Send me *toggl setup <token>*');
@@ -411,7 +410,7 @@ function hubotToggl(robot) {
     return totalTime - normalTime;
   }
   
-  function updateTimeEntriesWithFlexTag(res, entryIds, flex) {
+  function updateTimeEntriesWithFlexTag(res, entryIds) {
     return http(res, 'put', 'https://www.toggl.com/api/v8/time_entries/'+entryIds.join(","), {
       time_entry: {
         tags: [flexTagName],
@@ -420,7 +419,6 @@ function hubotToggl(robot) {
     })
       .spread(function(httpRes) {
         assertStatus(200, httpRes);
-        return flex;
       });
   }
   
@@ -432,7 +430,6 @@ function hubotToggl(robot) {
     })
       .spread(function(httpRes) {
         assertStatus(200, httpRes);
-        return flex;
       });
   }
   
@@ -454,7 +451,6 @@ function hubotToggl(robot) {
     })
       .spread(function(httpRes) {
         assertStatus(200, httpRes);
-        return flex;
       });
   }
   
@@ -481,10 +477,15 @@ function hubotToggl(robot) {
       }
     }
     
+    var todo = [];
     if (toBeUpdated.length > 0)
-      return updateTimeEntriesWithFlexTag(res, toBeUpdated, flex);
+      todo.push(updateTimeEntriesWithFlexTag(res, toBeUpdated));
     if (toBeSplit)
-      return splitTimeEntry(res, toBeSplit, flexRemaining);
+      todo.push(splitTimeEntry(res, toBeSplit, flexRemaining));
+    
+    return Promise.all(todo).then(function(){ 
+      return flex; 
+    });
   }
   
   function addAbsence(res, start, flex) {
