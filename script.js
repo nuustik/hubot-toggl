@@ -5,8 +5,7 @@
 //   setup <token> - Sets-up an user's account with Toggl
 //   whoami - Prints the current authenticated Toggl user
 //   show flex - Shows flex earned in this year
-//   get flex <time slot> <working hours> - Reports flex in given time slot
-//   log flex <time slot> <working hours> - Logs flex in given time slot
+//   log flex <time period> <working hours> - Logs flex in given time period
 
 'use strict';
 var buffer = require('buffer');
@@ -51,19 +50,11 @@ function formatErrorMessage(err) {
   return '*Error:* ' + err;
 } 
 
-function getHelpForGetFlex() {
-  var message = 
-    "Send me *get flex <time slot> <working hours>*\n" +
-    "_time slot_ - Relative time period to calculate the flex from. E.g -1w for previous week.\n" +
-    "_working hours_ - Normal working hours in this time slot. E.g 40h for 40 hours.";
-  return message;
-}
-
 function getHelpForLogFlex() {
   var message = 
-    "Send me *log flex <time slot> <working hours>*\n" +
-    "_time slot_ - Relative time period to calculate the flex from. E.g -1w for previous week.\n" +
-    "_working hours_ - Normal working hours in this time slot. E.g 40h for 40 hours.";
+    "Send me *log flex <time period> <working hours>*\n" +
+    "_time period_ - Relative time period to calculate the flex from. E.g -1w for previous week.\n" +
+    "_working hours_ - Normal working hours in this time period. E.g 40h for 40 hours.";
   return message;
 }
   
@@ -120,7 +111,7 @@ function hubotToggl(robot) {
     );
   });
   
-  robot.respond(/get flex( +([^\s]+) +([^\s]+))?/i, function(res) {
+  robot.respond(/log flex( +([^\s]+) +([^\s]+))?/i, function(res) {
     var userId = res.envelope.user.id;
     if (isUserAuthenticated(userId)){
       res.send(NO_ACCOUNT_ERROR);
@@ -129,7 +120,7 @@ function hubotToggl(robot) {
     
     Promise.resolve()
       .then(function() { 
-        return parseArguments(res, getHelpForGetFlex()); 
+        return parseArguments(res); 
       })
       .then(function(request){ 
         return getFlex(res, request);
@@ -145,34 +136,6 @@ function hubotToggl(robot) {
         }
         else
           res.send("No flex found. Everything is perfect!");
-      })
-      .catch(errorHandler(res));
-  });
-  
-  robot.respond(/log flex( +([^\s]+) +([^\s]+))?/i, function(res) {
-    if (isUserAuthenticated(res.envelope.user.id)){
-      res.send(NO_ACCOUNT_ERROR);
-      return;
-    }
-
-    Promise.resolve()
-      .then(function() {
-        return parseArguments(res, getHelpForLogFlex());
-      })
-      .then(function(request){ 
-        return getFlex(res, request);
-      })
-      .then(function(result) {
-        if (result.flex) {
-          logFlex(res, result)
-            .then(function(flex){
-              res.send(String.format("{0} hours of flex logged.", 
-                secondsToHours(flex))
-              );
-            });
-        }
-        else
-          res.send("Nothing to log. You have 0 hours of flex.");
       })
       .catch(errorHandler(res));
   });
@@ -231,8 +194,7 @@ function hubotToggl(robot) {
       "setup <token> - Sets-up an user's account with Toggl\n" +
       "whoami - Prints the current authenticated Toggl user\n" +
       "show flex - Shows flex account of this year\n" +
-      "get flex <time slot> <working hours> - Reports flex in given time slot based on working hours\n" +
-      "log flex <time slot> <working hours> - Logs flex in given time slot based on working hours\n";
+      "log flex <time period> <working hours> - Logs flex in given time period based on working hours\n";
     res.send(message);
   });
   
@@ -263,9 +225,9 @@ function hubotToggl(robot) {
     return !user || !user.toggl || !user.toggl.me;
   }
    
-  function parseArguments(res, helpMessage) {
+  function parseArguments(res) {
     if (res.match[1] === undefined)
-      throw Error(helpMessage);
+      throw Error(getHelpForLogFlex());
     
     var timeslotArg = res.match[2];
     var timeslotUnits = timeslotArg.slice(-1);
@@ -279,9 +241,9 @@ function hubotToggl(robot) {
     workingTime = parseFloat(workingTime);
 
     if (isNaN(timeslot))
-      throw Error('_Time slot_ must be integer.');
+      throw Error('_Time period_ must be integer.');
     if (timeslotUnits !== 'd' && timeslotUnits !== 'w')
-      throw new Error('_Time slot_ must use _w_ for weeks or _d_ for days. E.g -2d or -3w');
+      throw new Error('_Time period_ must use _w_ for weeks or _d_ for days. E.g -2d or -3w');
     if (isNaN(workingTime) || workingTime < 0)
       throw Error('_Working hours_ must be positive number.');
     if (workingTimeUnits !== 'h')
