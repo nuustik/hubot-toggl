@@ -14,7 +14,7 @@ var _ = require('lodash');
 var moment = require('moment');
 
 var Buffer = buffer.Buffer;
-var NO_ACCOUNT_ERROR = 'No Toggl Account set-up. Add your account with: *toggl setup <token>*';
+var NO_ACCOUNT_ERROR = 'No Toggl Account set-up. Add your account with: *setup <token>*';
 var workspaceId = 1815032;
 var absenceProjectId = 27669326;
 var absenceTaskName = "Compensatory time off (flex hours)";
@@ -53,7 +53,7 @@ function formatErrorMessage(err) {
 function getHelpForLogFlex() {
   var message = 
     "Send me *log flex <time period> <working hours>*\n" +
-    "_time period_ - Relative time period to calculate the flex from. E.g -1w for previous week.\n" +
+    "_time period_ - Relative time period to calculate the flex from. E.g -1w for previous week or -1d for previous day.\n" +
     "_working hours_ - Nominal working hours in this time period. E.g 40h for 40 hours.";
   return message;
 }
@@ -73,7 +73,7 @@ function hubotToggl(robot) {
     var userId = res.envelope.user.id;
 
     if(!token) {
-      res.send('Missing token. Send me *toggl setup <token>*.');
+      res.send('Missing token. Send me *setup <token>*.');
       return;
     }
 
@@ -194,7 +194,7 @@ function hubotToggl(robot) {
       "setup <token> - Sets-up an user's account with Toggl\n" +
       "whoami - Prints the current authenticated Toggl user\n" +
       "show flex - Shows flex account of this year\n" +
-      "log flex <time period> <working hours> - Logs flex in given time period based on working hours\n";
+      "log flex <time period> <working hours> - Logs flex in given time period based on nominal working hours. For more help type _log flex_.\n";
     res.send(message);
   });
   
@@ -206,6 +206,11 @@ function hubotToggl(robot) {
     clearUserData(userId);
   });
   
+  function getTogglUserId(slackUserId) {
+    var user = robot.brain.userForId(slackUserId);
+    return user ? user.toggl.me.data.id : null;
+  }
+    
   function assertStatus(status, httpRes) {
     if(httpRes.statusCode !== status) {
       throw new Error(
@@ -241,7 +246,7 @@ function hubotToggl(robot) {
     workingTime = parseFloat(workingTime);
 
     if (isNaN(timeslot) || timeslot > 0)
-      throw Error('_Time period_ must be negative integer.');
+      throw Error('_Time period_ must be negative integer or 0.');
     if (timeslotUnits !== 'd' && timeslotUnits !== 'w')
       throw new Error('_Time period_ must use _w_ for weeks or _d_ for days. E.g -2d or -3w');
     if (isNaN(workingTime) || workingTime < 0)
@@ -406,7 +411,8 @@ function hubotToggl(robot) {
         tags: tags,
         wid: timeEntry.wid,
         pid: timeEntry.pid,
-        tid: timeEntry.tid
+        tid: timeEntry.tid,
+        uid: getTogglUserId(res.envelope.user.id)
       }
     })
       .spread(function(httpRes) {
@@ -456,6 +462,7 @@ function hubotToggl(robot) {
             wid: workspaceId,
             pid: absenceProjectId,
             tid: taskId,
+            uid: getTogglUserId(res.envelope.user.id),
             duration: Math.abs(flex),
             start: start,
             created_with: "hubot"
@@ -471,12 +478,13 @@ function hubotToggl(robot) {
   function getFlexUsed(res) {
     return getAbsenceTaskId(res)
       .then(function(taskId){
-        var url = String.format("https://toggl.com/reports/api/v2/summary?workspace_id={0}&since={1}&until={2}&project_ids={3}&task_ids={4}&user_agent={5}", 
+        var url = String.format("https://toggl.com/reports/api/v2/summary?workspace_id={0}&since={1}&until={2}&project_ids={3}&task_ids={4}&user_ids={5}&user_agent={6}", 
             workspaceId,
             moment().startOf('year').format("YYYY-MM-DD"), 
             moment().endOf('year').format("YYYY-MM-DD"),
             absenceProjectId,
             taskId,
+            getTogglUserId(res.envelope.user.id),
             userAgent);
 
         return http(res, 'get', url)
@@ -507,8 +515,9 @@ function hubotToggl(robot) {
   function getFlexEarned(res) {
     return getFlexTagId(res)
       .then(function(tagId) {
-        var url = String.format("https://toggl.com/reports/api/v2/summary?workspace_id={0}&since={1}&until={2}&tag_ids={3}&user_agent={4}", 
+        var url = String.format("https://toggl.com/reports/api/v2/summary?workspace_id={0}&user_ids={1}&since={2}&until={3}&tag_ids={4}&user_agent={5}", 
           workspaceId,
+          getTogglUserId(res.envelope.user.id),
           moment().startOf('year').format("YYYY-MM-DD"), 
           moment().endOf('year').format("YYYY-MM-DD"),
           tagId,
