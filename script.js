@@ -16,8 +16,8 @@ var moment = require('moment');
 
 var Buffer = buffer.Buffer;
 var NO_ACCOUNT_ERROR = 'No Toggl Account set-up. Add your account with: *toggl setup <token>*';
-var workspaceId = 703078;//1815032; //my 703078;
-var absenceProjectId = 30099519;//27669326; //my 30099519;
+var workspaceId = 1815032;
+var absenceProjectId = 27669326;
 var absenceTaskName = "Compensatory time off (flex hours)";
 var flexTagName = "Flex";
 var userAgent = "hubot";
@@ -75,7 +75,7 @@ function hubotToggl(robot) {
 
     if(!robot.adapter.client.rtm.dataStore.getDMById(res.message.room)) {
       res.reply('I can only authenticate you with a Private Message');
-      robot.send({room: res.message.room}, 'Send me *toggl setup <token>*');
+      robot.send({room: res.message.room}, 'Send me *setup <token>*');
       return;
     }
 
@@ -166,9 +166,8 @@ function hubotToggl(robot) {
         if (result.flex) {
           logFlex(res, result)
             .then(function(flex){
-              res.send(String.format("{0} hours of {1} logged.", 
-                secondsToHours(Math.abs(flex)), 
-                flex < 0 ? "absence" : "flex")
+              res.send(String.format("{0} hours of flex logged.", 
+                secondsToHours(flex))
               );
             });
         }
@@ -178,7 +177,7 @@ function hubotToggl(robot) {
       .catch(errorHandler(res));
   });
   
-  robot.respond(/yes\b$|y\b$/i, function(res) {
+  robot.respond(/yes\b$|y\b$|ok\b$/i, function(res) {
     var userId = res.envelope.user.id;
     if (isUserAuthenticated(userId)){
       return;
@@ -194,9 +193,8 @@ function hubotToggl(robot) {
         if (result.flex === data.flex){
           return logFlex(res, result)
             .then(function(flex){
-              res.send(String.format("{0} hours of {1} logged.", 
-                secondsToHours(Math.abs(flex)), 
-                flex < 0 ? "absence" : "flex")
+              res.send(String.format("{0} hours of flex logged.", 
+                secondsToHours(flex))
               );
             });
         }
@@ -238,7 +236,7 @@ function hubotToggl(robot) {
     res.send(message);
   });
   
-  robot.hear(/^(?!.*(yes\b$|y\b$))/i, function(res) {
+  robot.hear(/^(?!.*(yes\b$|y\b$|ok\b$))/i, function(res) {
     var userId = res.envelope.user.id;
     if (isUserAuthenticated(userId)){
       return;
@@ -574,9 +572,7 @@ function hubotToggl(robot) {
           if (body[i].name === absenceTaskName)
             return body[i].id;
         }
-        return null;
-        console.log("FFFFIIIIIIIIIIIIXXXXXX MEEEEEE");
-        //throw new Error("Cannot find task '" + absenceTaskName + "'");
+        throw new Error("Cannot find task '" + absenceTaskName + "'");
       });
   }
   
