@@ -54,7 +54,7 @@ function getHelpForLogFlex() {
   var message = 
     "Send me *log flex <time period> <working hours>*\n" +
     "_time period_ - Relative time period to calculate the flex from. E.g -1w for previous week.\n" +
-    "_working hours_ - Normal working hours in this time period. E.g 40h for 40 hours.";
+    "_working hours_ - Nominal working hours in this time period. E.g 40h for 40 hours.";
   return message;
 }
   
@@ -240,8 +240,8 @@ function hubotToggl(robot) {
     timeslot = parseInt(timeslot);
     workingTime = parseFloat(workingTime);
 
-    if (isNaN(timeslot))
-      throw Error('_Time period_ must be integer.');
+    if (isNaN(timeslot) || timeslot > 0)
+      throw Error('_Time period_ must be negative integer.');
     if (timeslotUnits !== 'd' && timeslotUnits !== 'w')
       throw new Error('_Time period_ must use _w_ for weeks or _d_ for days. E.g -2d or -3w');
     if (isNaN(workingTime) || workingTime < 0)
