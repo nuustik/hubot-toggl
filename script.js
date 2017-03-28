@@ -5,7 +5,7 @@
 //   setup <token> - Sets-up an user's account with Toggl
 //   whoami - Prints the current authenticated Toggl user
 //   show flex - Shows flex earned in this year
-//   log flex <time period> <working hours> - Logs flex in given time period
+//   log flex <time slot> <working hours> - Logs flex in given time slot
 
 'use strict';
 var buffer = require('buffer');
@@ -52,8 +52,8 @@ function formatErrorMessage(err) {
 
 function getHelpForLogFlex() {
   var message = 
-    "Send me *log flex <time period> <working hours>*\n" +
-    "_time period_ - Relative time period to calculate the flex from. E.g -1w for previous week or -1d for previous day.\n" +
+    "Send me *log flex <time slot> <working hours>*\n" +
+    "_time slot_ - Relative time slot to calculate the flex from. E.g -1d for previous day, -1w for previous week or -1m for previous month.\n" +
     "_working hours_ - Nominal working hours in this time period. E.g 40h for 40 hours.";
   return message;
 }
@@ -194,7 +194,7 @@ function hubotToggl(robot) {
       "setup <token> - Sets-up an user's account with Toggl\n" +
       "whoami - Prints the current authenticated Toggl user\n" +
       "show flex - Shows flex account of this year\n" +
-      "log flex <time period> <working hours> - Logs flex in given time period based on nominal working hours. For more help type _log flex_.\n";
+      "log flex <time slot> <working hours> - Logs flex in given time slot based on nominal working hours. For more help type _log flex_.\n";
     res.send(message);
   });
   
@@ -246,9 +246,9 @@ function hubotToggl(robot) {
     workingTime = parseFloat(workingTime);
 
     if (isNaN(timeslot) || timeslot > 0)
-      throw Error('_Time period_ must be negative integer or 0.');
-    if (timeslotUnits !== 'd' && timeslotUnits !== 'w')
-      throw new Error('_Time period_ must use _w_ for weeks or _d_ for days. E.g -2d or -3w');
+      throw Error('_Time slot_ must be negative integer or 0.');
+    if (timeslotUnits !== 'd' && timeslotUnits !== 'w' && timeslotUnits !== 'm')
+      throw new Error('_Time slot_ must use _d_ for days, _w_ for weeks or _m_ for months. E.g -2d or -3w');
     if (isNaN(workingTime) || workingTime < 0)
       throw Error('_Working hours_ must be positive number.');
     if (workingTimeUnits !== 'h')
@@ -264,6 +264,11 @@ function hubotToggl(robot) {
     {
       request.start = moment().add(timeslot, 'weeks').startOf('isoweek').toISOString();
       request.stop = moment().add(timeslot, 'weeks').endOf('isoweek').toISOString();
+    }
+    else if (timeslotUnits === 'm')
+    {
+      request.start = moment().add(timeslot, 'months').startOf('month').toISOString();
+      request.stop = moment().add(timeslot, 'months').endOf('month').toISOString();
     }
     if (workingTimeUnits === 'h')
       request.workingTime = hoursToSeconds(workingTime);
