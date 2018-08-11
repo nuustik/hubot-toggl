@@ -155,9 +155,10 @@ function hubotToggl(robot) {
       .then(function(result){
         if (result.flex === data.flex){
           return logFlex(res, result)
-            .then(function(flex){
-              res.send(String.format("{0} hours of flex logged.", 
-                secondsToHours(flex))
+            .then(function(entries){
+              res.send(String.format("{0} hours of flex logged on {1}", 
+                secondsToHours(result.flex),
+                moment(entries[0].start).format("dddd, MMMM Do YYYY"))
               );
             });
         }
@@ -387,8 +388,10 @@ function hubotToggl(robot) {
         tag_action: 'add'
       }
     })
-      .spread(function(httpRes) {
+      .spread(function(httpRes, body) {
         assertStatus(200, httpRes);
+        body = JSON.parse(body);
+        return body.data;
       });
   }
   
@@ -398,8 +401,10 @@ function hubotToggl(robot) {
     return http(res, 'put', 'https://www.toggl.com/api/v8/time_entries/'+timeEntry.id, {
       time_entry: timeEntry
     })
-      .spread(function(httpRes) {
+      .spread(function(httpRes, body) {
         assertStatus(200, httpRes);
+        body = JSON.parse(body);
+        return body.data;
       });
   }
   
@@ -420,15 +425,17 @@ function hubotToggl(robot) {
         uid: getTogglUserId(res.envelope.user.id)
       }
     })
-      .spread(function(httpRes) {
+      .spread(function(httpRes, body) {
         assertStatus(200, httpRes);
+        body = JSON.parse(body);
+        return body.data;
       });
   }
   
   function splitTimeEntry(res, timeEntry, flexInSeconds) {
-    return addNewEntry(res, timeEntry, flexInSeconds)
-      .then(function() {
-        return modifyOldEntry(res, timeEntry, flexInSeconds);        
+    return modifyOldEntry(res, timeEntry, flexInSeconds)
+      .then(function(entry) {
+        return addNewEntry(res, timeEntry, flexInSeconds);        
       });
   }
   
@@ -454,9 +461,7 @@ function hubotToggl(robot) {
     if (toBeSplit)
       todo.push(splitTimeEntry(res, toBeSplit, flexRemaining));
     
-    return Promise.all(todo).then(function(){ 
-      return flex; 
-    });
+    return Promise.all(todo);
   }
   
   function addAbsence(res, start, flex) {
@@ -473,9 +478,10 @@ function hubotToggl(robot) {
             created_with: "hubot"
           }
         })
-          .spread(function(httpRes) {
+          .spread(function(httpRes, body) {
             assertStatus(200, httpRes);
-            return flex;
+            body = JSON.parse(body);
+            return [body.data];
           });
       });
   }
