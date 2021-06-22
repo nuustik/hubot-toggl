@@ -79,7 +79,7 @@ function hubotToggl(robot) {
 
     var user = robot.brain.userForId(userId);
     res.send('Validating your token');
-    return http(token, 'get', 'https://toggl.com/api/v8/me')
+    return http(token, 'get', 'https://api.track.toggl.com/api/v8/me')
       .spread(function(httpRes, body) {
         assertStatus(200, httpRes);
         body = JSON.parse(body);
@@ -348,7 +348,7 @@ function hubotToggl(robot) {
   }
   
   function getTimeEntries(res, start, stop) {
-    var url = String.format("https://www.toggl.com/api/v8/time_entries?start_date={0}&end_date={1}", 
+    var url = String.format("https://api.track.toggl.com/api/v8/time_entries?start_date={0}&end_date={1}", 
       start, 
       stop);
 
@@ -382,7 +382,7 @@ function hubotToggl(robot) {
   }
   
   function updateTimeEntriesWithFlexTag(res, entryIds) {
-    return http(res, 'put', 'https://www.toggl.com/api/v8/time_entries/'+entryIds.join(","), {
+    return http(res, 'put', 'https://api.track.toggl.com/api/v8/time_entries/'+entryIds.join(","), {
       time_entry: {
         tags: [flexTagName],
         tag_action: 'add'
@@ -398,7 +398,7 @@ function hubotToggl(robot) {
   function modifyOldEntry(res, timeEntry, flex) {
     timeEntry.duration = timeEntry.duration - flex;
     timeEntry.stop = moment(timeEntry.start).add(timeEntry.duration, 'seconds');
-    return http(res, 'put', 'https://www.toggl.com/api/v8/time_entries/'+timeEntry.id, {
+    return http(res, 'put', 'https://api.track.toggl.com/api/v8/time_entries/'+timeEntry.id, {
       time_entry: timeEntry
     })
       .spread(function(httpRes, body) {
@@ -411,7 +411,7 @@ function hubotToggl(robot) {
   function addNewEntry(res, timeEntry, flex) {
     var tags = timeEntry.tags !== undefined ? timeEntry.tags : [];
     tags.push(flexTagName);
-    return http(res, 'post', 'https://www.toggl.com/api/v8/time_entries', {
+    return http(res, 'post', 'https://api.track.toggl.com/api/v8/time_entries', {
       time_entry: {
         description: timeEntry.description,
         duration: flex,
@@ -467,7 +467,7 @@ function hubotToggl(robot) {
   function addAbsence(res, start, flex) {
     return getAbsenceTaskId(res)
       .then(function(taskId){
-        return http(res, 'post', 'https://www.toggl.com/api/v8/time_entries', {
+        return http(res, 'post', 'https://api.track.toggl.com/api/v8/time_entries', {
           time_entry: {
             wid: workspaceId,
             pid: absenceProjectId,
@@ -489,7 +489,7 @@ function hubotToggl(robot) {
   function getFlexUsed(res) {
     return getAbsenceTaskId(res)
       .then(function(taskId){
-        var url = String.format("https://toggl.com/reports/api/v2/summary?workspace_id={0}&since={1}&until={2}&project_ids={3}&task_ids={4}&user_ids={5}&user_agent={6}", 
+        var url = String.format("https://api.track.toggl.com/reports/api/v2/summary?workspace_id={0}&since={1}&until={2}&project_ids={3}&task_ids={4}&user_ids={5}&user_agent={6}", 
             workspaceId,
             moment().startOf('year').format("YYYY-MM-DD"), 
             moment().endOf('year').format("YYYY-MM-DD"),
@@ -508,7 +508,7 @@ function hubotToggl(robot) {
   }
   
   function getFlexTagId(res) {
-    var url = String.format("https://www.toggl.com/api/v8/workspaces/{0}/tags", 
+    var url = String.format("https://api.track.toggl.com/api/v8/workspaces/{0}/tags", 
         workspaceId);
 
     return http(res, 'get', url)
@@ -526,7 +526,7 @@ function hubotToggl(robot) {
   function getFlexEarned(res) {
     return getFlexTagId(res)
       .then(function(tagId) {
-        var url = String.format("https://toggl.com/reports/api/v2/summary?workspace_id={0}&user_ids={1}&since={2}&until={3}&tag_ids={4}&user_agent={5}", 
+        var url = String.format("https://api.track.toggl.com/reports/api/v2/summary?workspace_id={0}&user_ids={1}&since={2}&until={3}&tag_ids={4}&user_agent={5}", 
           workspaceId,
           getTogglUserId(res.envelope.user.id),
           moment().startOf('year').format("YYYY-MM-DD"), 
@@ -544,7 +544,7 @@ function hubotToggl(robot) {
   }
   
   function getAbsenceTaskId(res) {
-    var url = String.format("https://www.toggl.com/api/v8/projects/{0}/tasks", absenceProjectId);
+    var url = String.format("https://api.track.toggl.com/api/v8/projects/{0}/tasks", absenceProjectId);
 
     return http(res, 'get', url)
       .spread(function(httpRes, body) {
