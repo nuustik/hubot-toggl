@@ -1,12 +1,3 @@
-// Description:
-//   A Hubot script to add Toggl integration to your company's chat
-//
-// Commands:
-//   setup <token> - Sets-up an user's account with Toggl
-//   whoami - Prints the current authenticated Toggl user
-//   show flex - Shows flex earned in this year
-//   log flex <time slot> <working hours> - Logs flex in given time slot
-
 'use strict';
 var buffer = require('buffer');
 var Promise = require('bluebird');
@@ -19,7 +10,6 @@ var workspaceId = 1815032;
 var absenceProjectId = 27669326;
 var absenceTaskName = "Compensatory time off (flex hours)";
 var flexTagName = "Flex";
-var userAgent = "hubot";
 var userData = new Object();
 
 if (!String.format) {
@@ -63,13 +53,6 @@ function hubotToggl(robot) {
  
   robot.respond(/setup( (.*))?/i, function(res) {
     var token = res.match[2];
-
-    if(!robot.adapter.client.rtm.dataStore.getDMById(res.message.room)) {
-      res.reply('I can only authenticate you with a Private Message');
-      robot.send({room: res.message.room}, 'Send me *setup <token>*');
-      return;
-    }
-
     var userId = res.envelope.user.id;
 
     if(!token) {
@@ -79,14 +62,14 @@ function hubotToggl(robot) {
 
     var user = robot.brain.userForId(userId);
     res.send('Validating your token');
-    return http(token, 'get', 'https://api.track.toggl.com/api/v8/me')
+    return http(token, 'get', 'https://api.track.toggl.com/api/v9/me')
       .spread(function(httpRes, body) {
         assertStatus(200, httpRes);
         body = JSON.parse(body);
         res.send(
-          'Authenticated as: *' + body.data.fullname + '*\n' +
-          'User ID: *' + body.data.id + '*\n' +
-          'Default Workspace ID: *' + body.data.default_wid + '*'
+          'Authenticated as: *' + body.fullname + '*\n' +
+          'User ID: *' + body.id + '*\n' +
+          'Default Workspace ID: *' + body.default_workspace_id + '*'
         );
         user.toggl = {
           me: body
@@ -105,9 +88,9 @@ function hubotToggl(robot) {
     
     var me = user.toggl.me;
     res.send(
-      'Authenticated as: *' + me.data.fullname + '*\n' +
-      'User ID: *' + me.data.id + '*\n' +
-      'Default Workspace ID: *' + me.data.default_wid + '*'
+      'Authenticated as: *' + me.fullname + '*\n' +
+      'User ID: *' + me.id + '*\n' +
+      'Default Workspace ID: *' + me.default_workspace_id + '*'
     );
   });
   
@@ -119,7 +102,7 @@ function hubotToggl(robot) {
     }
     
     Promise.resolve()
-      .then(function() { 
+      .then(function() {
         return parseArguments(res); 
       })
       .then(function(request){ 
@@ -158,7 +141,7 @@ function hubotToggl(robot) {
             .then(function(entries){
               res.send(String.format("{0} hours of flex logged on {1}", 
                 secondsToHours(result.flex),
-                moment(entries[0].start).format("dddd, MMMM Do YYYY"))
+                moment(entries.flat()[0].start).format("dddd, MMMM Do YYYY"))
               );
             });
         }
@@ -209,7 +192,7 @@ function hubotToggl(robot) {
   
   function getTogglUserId(slackUserId) {
     var user = robot.brain.userForId(slackUserId);
-    return user ? user.toggl.me.data.id : null;
+    return user ? user.toggl.me.id : null;
   }
     
   function assertStatus(status, httpRes) {
@@ -302,7 +285,7 @@ function hubotToggl(robot) {
         token = res;
       } else {
         var user = robot.brain.userForId(res.envelope.user.id);
-        token = user && user.toggl && user.toggl.me && user.toggl.me.data.api_token;
+        token = user && user.toggl && user.toggl.me && user.toggl.me.api_token;
       }
 
       if(!token) {
@@ -348,7 +331,7 @@ function hubotToggl(robot) {
   }
   
   function getTimeEntries(res, start, stop) {
-    var url = String.format("https://api.track.toggl.com/api/v8/time_entries?start_date={0}&end_date={1}", 
+    var url = String.format("https://api.track.toggl.com/api/v9/me/time_entries?start_date={0}&end_date={1}", 
       start, 
       stop);
 
@@ -381,61 +364,71 @@ function hubotToggl(robot) {
     return totalTime - normalTime;
   }
   
-  function updateTimeEntriesWithFlexTag(res, entryIds) {
-    return http(res, 'put', 'https://api.track.toggl.com/api/v8/time_entries/'+entryIds.join(","), {
-      time_entry: {
-        tags: [flexTagName],
-        tag_action: 'add'
-      }
-    })
+  function updateTimeEntriesWithFlexTag(res, timeEntries) {
+    var entryIds = [];
+    for (var i in timeEntries)
+      entryIds.push(timeEntries[i].id);
+
+    var url = String.format('https://api.track.toggl.com/api/v9/workspaces/{0}/time_entries/'+entryIds.join(","), workspaceId);
+    return http(res, 'patch', url,
+      [{
+        path: "/tags",
+        value: [flexTagName],
+        op: 'add'
+      }]
+    )
       .spread(function(httpRes, body) {
         assertStatus(200, httpRes);
         body = JSON.parse(body);
-        return body.data;
+        return timeEntries;
       });
   }
   
   function modifyOldEntry(res, timeEntry, flex) {
-    timeEntry.duration = timeEntry.duration - flex;
-    timeEntry.stop = moment(timeEntry.start).add(timeEntry.duration, 'seconds');
-    return http(res, 'put', 'https://api.track.toggl.com/api/v8/time_entries/'+timeEntry.id, {
-      time_entry: timeEntry
+    var newDuration = timeEntry.duration - flex;
+    var url = String.format('https://api.track.toggl.com/api/v9/workspaces/{0}/time_entries/'+timeEntry.id, workspaceId);
+    return http(res, 'put', url, {
+      duration: newDuration,
+      stop: moment(timeEntry.start).add(newDuration, 'seconds'),
     })
       .spread(function(httpRes, body) {
         assertStatus(200, httpRes);
         body = JSON.parse(body);
-        return body.data;
+        return body;
       });
   }
   
   function addNewEntry(res, timeEntry, flex) {
     var tags = timeEntry.tags !== undefined ? timeEntry.tags : [];
     tags.push(flexTagName);
-    return http(res, 'post', 'https://api.track.toggl.com/api/v8/time_entries', {
-      time_entry: {
-        description: timeEntry.description,
-        duration: flex,
-        start: timeEntry.start,
-        stop: timeEntry.stop,
-        created_with: "hubot",
-        tags: tags,
-        wid: timeEntry.wid,
-        pid: timeEntry.pid,
-        tid: timeEntry.tid,
-        uid: getTogglUserId(res.envelope.user.id)
-      }
+    var url = String.format("https://api.track.toggl.com/api/v9/workspaces/{0}/time_entries", workspaceId);
+    return http(res, 'post', url, {
+      description: timeEntry.description,
+      duration: flex,
+      start: timeEntry.start,
+      stop: moment(timeEntry.start).add(flex, 'seconds'),
+      created_with: "hubot",
+      billable: timeEntry.billable,
+      tags: tags,
+      wid: timeEntry.wid,
+      pid: timeEntry.pid,
+      tid: timeEntry.tid,
+      uid: getTogglUserId(res.envelope.user.id)
     })
       .spread(function(httpRes, body) {
         assertStatus(200, httpRes);
         body = JSON.parse(body);
-        return body.data;
+        return body;
       });
   }
   
   function splitTimeEntry(res, timeEntry, flexInSeconds) {
     return modifyOldEntry(res, timeEntry, flexInSeconds)
-      .then(function(entry) {
-        return addNewEntry(res, timeEntry, flexInSeconds);        
+      .then(function(modifiedEntry) {
+        return addNewEntry(res, timeEntry, flexInSeconds)
+          .then(function(newEntry) {
+            return [modifiedEntry, newEntry]
+          });
       });
   }
   
@@ -446,7 +439,7 @@ function hubotToggl(robot) {
     
     for (var i in timeEntries) {
       if (timeEntries[i].duration <= flexRemaining){
-        toBeUpdated.push(timeEntries[i].id);
+        toBeUpdated.push(timeEntries[i]);
         flexRemaining -= timeEntries[i].duration;
       }
       else{
@@ -458,7 +451,7 @@ function hubotToggl(robot) {
     var todo = [];
     if (toBeUpdated.length > 0)
       todo.push(updateTimeEntriesWithFlexTag(res, toBeUpdated));
-    if (toBeSplit)
+    if (toBeSplit && flexRemaining > 0)
       todo.push(splitTimeEntry(res, toBeSplit, flexRemaining));
     
     return Promise.all(todo);
@@ -467,21 +460,20 @@ function hubotToggl(robot) {
   function addAbsence(res, start, flex) {
     return getAbsenceTaskId(res)
       .then(function(taskId){
-        return http(res, 'post', 'https://api.track.toggl.com/api/v8/time_entries', {
-          time_entry: {
-            wid: workspaceId,
-            pid: absenceProjectId,
-            tid: taskId,
-            uid: getTogglUserId(res.envelope.user.id),
-            duration: Math.abs(flex),
-            start: start,
-            created_with: "hubot"
-          }
+        var url = String.format("https://api.track.toggl.com/api/v9/workspaces/{0}/time_entries", workspaceId);
+        return http(res, 'post', url, {
+          wid: workspaceId,
+          pid: absenceProjectId,
+          tid: taskId,
+          uid: getTogglUserId(res.envelope.user.id),
+          duration: Math.abs(flex),
+          start: start,
+          created_with: "hubot"
         })
           .spread(function(httpRes, body) {
             assertStatus(200, httpRes);
             body = JSON.parse(body);
-            return [body.data];
+            return [body];
           });
       });
   }
@@ -489,26 +481,32 @@ function hubotToggl(robot) {
   function getFlexUsed(res) {
     return getAbsenceTaskId(res)
       .then(function(taskId){
-        var url = String.format("https://api.track.toggl.com/reports/api/v2/summary?workspace_id={0}&since={1}&until={2}&project_ids={3}&task_ids={4}&user_ids={5}&user_agent={6}", 
-            workspaceId,
-            moment().startOf('year').format("YYYY-MM-DD"), 
-            moment().endOf('year').format("YYYY-MM-DD"),
-            absenceProjectId,
-            taskId,
-            getTogglUserId(res.envelope.user.id),
-            userAgent);
+        var url = String.format("https://api.track.toggl.com/reports/api/v3/workspace/{0}/summary/time_entries", workspaceId);
 
-        return http(res, 'get', url)
+        return http(res, 'post', url, {
+          start_date: moment().startOf('year').format("YYYY-MM-DD"),
+          end_date: moment().endOf('year').format("YYYY-MM-DD"),
+          project_ids: [absenceProjectId],
+          task_ids: [taskId],
+          user_ids: [getTogglUserId(res.envelope.user.id)]
+        })
           .spread(function(httpRes, body) {
             assertStatus(200, httpRes);
             body = JSON.parse(body);
-            return body.total_grand/1000;
+            var total_seconds = 0;
+
+            for (var i in body.groups){
+              for (var j in body.groups[i].sub_groups){
+                total_seconds += body.groups[i].sub_groups[j].seconds;
+              }
+            }
+            return total_seconds;
           });
     });
   }
   
   function getFlexTagId(res) {
-    var url = String.format("https://api.track.toggl.com/api/v8/workspaces/{0}/tags", 
+    var url = String.format("https://track.toggl.com/api/v9/me/tags", 
         workspaceId);
 
     return http(res, 'get', url)
@@ -526,25 +524,31 @@ function hubotToggl(robot) {
   function getFlexEarned(res) {
     return getFlexTagId(res)
       .then(function(tagId) {
-        var url = String.format("https://api.track.toggl.com/reports/api/v2/summary?workspace_id={0}&user_ids={1}&since={2}&until={3}&tag_ids={4}&user_agent={5}", 
-          workspaceId,
-          getTogglUserId(res.envelope.user.id),
-          moment().startOf('year').format("YYYY-MM-DD"), 
-          moment().endOf('year').format("YYYY-MM-DD"),
-          tagId,
-          userAgent);
+        var url = String.format("https://api.track.toggl.com/reports/api/v3/workspace/{0}/summary/time_entries", workspaceId);
 
-        return http(res, 'get', url)
+        return http(res, 'post', url, {
+          user_ids: [getTogglUserId(res.envelope.user.id)],
+          start_date: moment().startOf('year').format("YYYY-MM-DD"),
+          end_date: moment().endOf('year').format("YYYY-MM-DD"),
+          tag_ids: [tagId]
+        })
           .spread(function(httpRes, body) {
             assertStatus(200, httpRes);
             body = JSON.parse(body);
-            return body.total_grand/1000;
+            var total_seconds = 0;
+
+            for (var i in body.groups){
+              for (var j in body.groups[i].sub_groups){
+                total_seconds += body.groups[i].sub_groups[j].seconds;
+              }
+            }
+            return total_seconds;
           });
       });
   }
   
   function getAbsenceTaskId(res) {
-    var url = String.format("https://api.track.toggl.com/api/v8/projects/{0}/tasks", absenceProjectId);
+    var url = String.format("https://api.track.toggl.com/api/v9/workspaces/{0}/projects/{1}/tasks", workspaceId, absenceProjectId);
 
     return http(res, 'get', url)
       .spread(function(httpRes, body) {
